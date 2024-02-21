@@ -74,7 +74,6 @@ type Stream struct {
 	onBufferedAmountLow func()
 	state               StreamState
 	log                 logging.LeveledLogger
-	name                string
 }
 
 // StreamIdentifier returns the Stream identifier associated to the stream.
@@ -100,8 +99,8 @@ func (s *Stream) SetReliabilityParams(unordered bool, relType byte, relVal uint3
 // setReliabilityParams sets reliability parameters for this stream.
 // The caller should hold the lock.
 func (s *Stream) setReliabilityParams(unordered bool, relType byte, relVal uint32) {
-	s.log.Debugf("[%s] reliability params: ordered=%v type=%d value=%d",
-		s.name, !unordered, relType, relVal)
+	s.log.Debugf("reliability params: ordered=%v type=%d value=%d",
+		!unordered, relType, relVal)
 	s.unordered = unordered
 	s.reliabilityType = relType
 	s.reliabilityValue = relVal
@@ -196,11 +195,11 @@ func (s *Stream) handleData(pd *chunkPayloadData) {
 	var readable bool
 	if s.reassemblyQueue.push(pd) {
 		readable = s.reassemblyQueue.isReadable()
-		s.log.Debugf("[%s] reassemblyQueue readable=%v", s.name, readable)
+		s.log.Debugf("reassemblyQueue readable=%v", readable)
 		if readable {
-			s.log.Debugf("[%s] readNotifier.signal()", s.name)
+			s.log.Debug("readNotifier.signal()")
 			s.readNotifier.Signal()
-			s.log.Debugf("[%s] readNotifier.signal() done", s.name)
+			s.log.Debug("readNotifier.signal() done")
 		}
 	}
 }
@@ -330,7 +329,7 @@ func (s *Stream) packetize(raw []byte, ppi PayloadProtocolIdentifier) []*chunkPa
 	}
 
 	s.bufferedAmount += uint64(len(raw))
-	s.log.Tracef("[%s] bufferedAmount = %d", s.name, s.bufferedAmount)
+	s.log.Tracef("bufferedAmount = %d", s.bufferedAmount)
 
 	return chunks
 }
@@ -342,7 +341,7 @@ func (s *Stream) Close() error {
 		s.lock.Lock()
 		defer s.lock.Unlock()
 
-		s.log.Debugf("[%s] Close: state=%s", s.name, s.state.String())
+		s.log.Debugf("Close: state=%s", s.state.String())
 
 		if s.state == StreamStateOpen {
 			if s.readErr == nil {
@@ -350,7 +349,7 @@ func (s *Stream) Close() error {
 			} else {
 				s.state = StreamStateClosed
 			}
-			s.log.Debugf("[%s] state change: open => %s", s.name, s.state.String())
+			s.log.Debugf("state change: open => %s", s.state.String())
 			return s.streamIdentifier, true
 		}
 		return s.streamIdentifier, false
@@ -411,13 +410,13 @@ func (s *Stream) onBufferReleased(nBytesReleased int) {
 
 	if s.bufferedAmount < uint64(nBytesReleased) {
 		s.bufferedAmount = 0
-		s.log.Errorf("[%s] released buffer size %d should be <= %d",
-			s.name, nBytesReleased, s.bufferedAmount)
+		s.log.Errorf("released buffer size %d should be <= %d",
+			nBytesReleased, s.bufferedAmount)
 	} else {
 		s.bufferedAmount -= uint64(nBytesReleased)
 	}
 
-	s.log.Tracef("[%s] bufferedAmount = %d", s.name, s.bufferedAmount)
+	s.log.Tracef("bufferedAmount = %d", s.bufferedAmount)
 
 	if s.onBufferedAmountLow != nil && fromAmount > s.bufferedAmountLow && s.bufferedAmount <= s.bufferedAmountLow {
 		f := s.onBufferedAmountLow
@@ -438,7 +437,7 @@ func (s *Stream) onInboundStreamReset() {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	s.log.Debugf("[%s] onInboundStreamReset: state=%s", s.name, s.state.String())
+	s.log.Debugf("onInboundStreamReset: state=%s", s.state.String())
 
 	// No more inbound data to read. Unblock the read with io.EOF.
 	// This should cause DCEP layer (datachannel package) to call Close() which
@@ -454,7 +453,7 @@ func (s *Stream) onInboundStreamReset() {
 	s.readNotifier.Broadcast()
 
 	if s.state == StreamStateClosing {
-		s.log.Debugf("[%s] state change: closing => closed", s.name)
+		s.log.Debug("state change: closing => closed")
 		s.state = StreamStateClosed
 	}
 }

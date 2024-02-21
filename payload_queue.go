@@ -165,12 +165,16 @@ func (q *payloadQueue) getLastTSNReceived() (uint32, bool) {
 }
 
 func (q *payloadQueue) markAllToRetrasmit() {
+	count := 0
 	for _, c := range q.chunkMap {
 		if c.acked || c.abandoned() {
 			continue
 		}
 		c.retransmit = true
+		count++
 	}
+	// TODO(erd): remove
+	fmt.Println("marked", count)
 }
 
 func (q *payloadQueue) getNumBytes() int {

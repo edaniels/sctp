@@ -10,6 +10,7 @@ import (
 type associationStats struct {
 	nDATAs       uint64
 	nSACKs       uint64
+	nSACKsSent   uint64
 	nT3Timeouts  uint64
 	nAckTimeouts uint64
 	nFastRetrans uint64
@@ -29,6 +30,14 @@ func (s *associationStats) incSACKs() {
 
 func (s *associationStats) getNumSACKs() uint64 {
 	return atomic.LoadUint64(&s.nSACKs)
+}
+
+func (s *associationStats) incSACKsSent() {
+	atomic.AddUint64(&s.nSACKsSent, 1)
+}
+
+func (s *associationStats) getNumSACKsSent() uint64 {
+	return atomic.LoadUint64(&s.nSACKsSent)
 }
 
 func (s *associationStats) incT3Timeouts() {
