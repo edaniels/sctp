@@ -10,11 +10,12 @@ import (
 )
 
 type payloadQueue struct {
-	chunkMap map[uint32]*chunkPayloadData
-	sorted   []uint32
-	dupTSN   []uint32
-	nBytes   int
-	mu       sync.RWMutex
+	chunkMap           map[uint32]*chunkPayloadData
+	sorted             []uint32
+	dupTSN             []uint32
+	nBytes             int
+	nSmallSizedPackets int
+	mu                 sync.RWMutex
 }
 
 func newPayloadQueue() *payloadQueue {
@@ -54,12 +55,18 @@ func (q *payloadQueue) canPush(p *chunkPayloadData, cumulativeTSN uint32) bool {
 	return true
 }
 
+// TODO(erd): this needs to be adjusted probably according to https://datatracker.ietf.org/doc/html/draft-minshall-nagle-01
+const smallSizedPacket = int(initialMTU)
+
 func (q *payloadQueue) pushNoCheck(p *chunkPayloadData) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	q.chunkMap[p.tsn] = p
 	q.nBytes += len(p.userData)
+	if len(p.userData) <= smallSizedPacket {
+		q.nSmallSizedPackets++
+	}
 	q.sorted = nil
 }
 
@@ -79,6 +86,9 @@ func (q *payloadQueue) push(p *chunkPayloadData, cumulativeTSN uint32) bool {
 
 	q.chunkMap[p.tsn] = p
 	q.nBytes += len(p.userData)
+	if len(p.userData) <= smallSizedPacket {
+		q.nSmallSizedPackets++
+	}
 	q.sorted = nil
 	return true
 }
@@ -95,6 +105,9 @@ func (q *payloadQueue) pop(tsn uint32) (*chunkPayloadData, bool) {
 		if c, ok := q.chunkMap[tsn]; ok {
 			delete(q.chunkMap, tsn)
 			q.nBytes -= len(c.userData)
+			if len(c.userData) <= smallSizedPacket {
+				q.nSmallSizedPackets++
+			}
 			return c, true
 		}
 	}
@@ -176,6 +189,9 @@ func (q *payloadQueue) markAsAcked(tsn uint32) int {
 		c.retransmit = false
 		nBytesAcked = len(c.userData)
 		q.nBytes -= nBytesAcked
+		if len(c.userData) <= smallSizedPacket {
+			q.nSmallSizedPackets--
+		}
 		c.userData = []byte{}
 	}
 
@@ -216,6 +232,13 @@ func (q *payloadQueue) getNumBytes() int {
 	defer q.mu.RUnlock()
 
 	return q.nBytes
+}
+
+func (q *payloadQueue) getNumSmallSizedPackets() int {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	return q.nSmallSizedPackets
 }
 
 func (q *payloadQueue) size() int {

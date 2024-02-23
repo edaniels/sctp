@@ -3,7 +3,9 @@
 
 package sctp
 
-import "sync"
+import (
+	"sync"
+)
 
 // control queue
 

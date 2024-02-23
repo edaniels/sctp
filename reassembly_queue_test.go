@@ -468,12 +468,12 @@ func TestReassemblyQueue(t *testing.T) {
 
 func TestChunkSet(t *testing.T) {
 	t.Run("Empty chunkSet", func(t *testing.T) {
-		cset := newChunkSet(0, 0)
+		cset := newChunkSet(0, 0, 0, 0)
 		assert.False(t, cset.isComplete(), "empty chunkSet cannot be complete")
 	})
 
 	t.Run("Push dup chunks to chunkSet", func(t *testing.T) {
-		cset := newChunkSet(0, 0)
+		cset := newChunkSet(0, 0, 0, 0)
 		cset.push(&chunkPayloadData{
 			tsn:               100,
 			beginningFragment: true,

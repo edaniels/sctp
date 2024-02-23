@@ -358,8 +358,10 @@ func createAssociation(config Config) *Association {
 	fmt.Println("USING NAME", a.name)
 
 	go func() {
+		started := time.Now()
 		for {
 			time.Sleep(5 * time.Second)
+			fmt.Printf("[%s] stats packets sent/s: %f\n", a.name, float64(a.stats.nPacketsSent)/time.Since(started).Seconds())
 			fmt.Printf("[%s] stats bytes received: %d\n", a.name, a.bytesReceived)
 			fmt.Printf("[%s] stats bytes sent: %d\n", a.name, a.bytesSent)
 			fmt.Printf("[%s] stats nDATAs (in): %d\n", a.name, a.stats.getNumDATAs())
@@ -460,6 +462,21 @@ func (a *Association) sendInit() error {
 
 	outbound.chunks = []chunk{a.storedInit}
 
+	println(a, "pushing init with", len(outbound.chunks))
+	// raw, err := a.marshalPacket(outbound)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// p, err := a.unmarshalPacket(raw)
+	// if err != nil {
+	// 	a.log.Warnf("unable to parse SCTP packet %s", err)
+	// 	panic("HERE1")
+	// }
+
+	// if err := checkPacket(p); err != nil {
+	// 	a.log.Warnf("failed validating packet %s", err)
+	// 	panic(err)
+	// }
 	a.controlQueue.push(outbound)
 	a.awakeWriteLoop()
 
@@ -678,6 +695,7 @@ loop:
 				panic("what...")
 			}
 			atomic.AddUint64(&a.bytesSent, uint64(len(raw)))
+			a.stats.incPacketsSent()
 		}
 
 		if !ok {
@@ -746,13 +764,17 @@ func (a *Association) unmarshalPacket(raw []byte) (*packet, error) {
 	if err := p.unmarshal(false, raw); err != nil {
 		return nil, err
 	}
-	if chunkMandatoryChecksum(p.chunks) {
-		if err := p.unmarshal(true, raw); err != nil {
-			return nil, err
-		}
+	if !chunkMandatoryChecksum(p.chunks) {
+		return p, nil
 	}
 
-	return p, nil
+	// TODO(erd): This feels inefficient
+	checkedP := &packet{}
+	if err := checkedP.unmarshal(true, raw); err != nil {
+		return nil, err
+	}
+
+	return checkedP, nil
 }
 
 // handleInbound parses incoming raw packets
@@ -1109,10 +1131,6 @@ func checkPacket(p *packet) error {
 			// They MUST be the only chunks present in the SCTP packets that carry
 			// them.
 			if len(p.chunks) != 1 {
-				fmt.Println("CHUNKS IS", len(p.chunks))
-				for _, c := range p.chunks {
-					fmt.Printf("BUNDLED WITH %T\n", c)
-				}
 				return ErrInitChunkBundled
 			}
 
@@ -2333,58 +2351,72 @@ func (a *Association) popPendingDataChunksToSend() ([]*chunkPayloadData, []uint1
 		//      is 0), the data sender can always have one DATA chunk in flight to
 		//      the receiver if allowed by cwnd (see rule B, below).
 
-		for {
-			c := a.pendingQueue.peek()
-			if c == nil {
-				break // no more pending data
+		// TODO(erd): docs!
+		collectChunks := true
+		if a.inflightQueue.getNumSmallSizedPackets() >= 1 {
+			if a.pendingQueue.getNumBytes() >= int(a.MTU()) {
+				// println("CAN SEND WITH SMALL PKTS", a.pendingQueue.getNumBytes()/int(a.MTU()))
+			} else {
+				collectChunks = false
+				// TODO(erd): log message
+				println("CAN NOT SEND WITH SMALL PKTS")
 			}
+		}
 
-			dataLen := uint32(len(c.userData))
-			if dataLen == 0 {
-				sisToReset = append(sisToReset, c.streamIdentifier)
-				err := a.pendingQueue.pop(c)
-				if err != nil {
-					a.log.Errorf("failed to pop from pending queue: %s", err.Error())
+		if collectChunks {
+			for {
+				c := a.pendingQueue.peek()
+				if c == nil {
+					break // no more pending data
 				}
-				continue
-			}
 
-			inflightQueueNumBytes := uint32(a.inflightQueue.getNumBytes())
-			if inflightQueueNumBytes+dataLen > a.CWND() {
-				// println("WOULD EXCEED CONGESTION WINDOW. GOING SLOW NOW?")
-				break // would exceeds cwnd
-			}
+				dataLen := uint32(len(c.userData))
+				if dataLen == 0 {
+					sisToReset = append(sisToReset, c.streamIdentifier)
+					err := a.pendingQueue.pop(c)
+					if err != nil {
+						a.log.Errorf("failed to pop from pending queue: %s", err.Error())
+					}
+					continue
+				}
 
-			if dataLen > a.rwnd {
-				// println("WOULD EXCEED RECEIVE WINDOW. GOING SLOW NOW?")
-				break // no more rwnd
-			}
+				inflightQueueNumBytes := uint32(a.inflightQueue.getNumBytes())
+				if inflightQueueNumBytes+dataLen > a.CWND() {
+					// println("WOULD EXCEED CONGESTION WINDOW. GOING SLOW NOW?")
+					break // would exceeds cwnd
+				}
 
-			var usableWnd uint32
-			if a.rwnd < inflightQueueNumBytes {
-				usableWnd = 0
-			} else {
-				usableWnd = a.rwnd - inflightQueueNumBytes
-			}
-			var swsRatio float64
-			if a.rwnd == 0 {
-				swsRatio = 0
-			} else {
-				swsRatio = float64(usableWnd) / float64(a.rwnd)
-			}
-			if swsRatio < 0.25 {
-				// println(a.name, "SWS AVOID usable")
-				// TODO(erd): reenable
-				// break // SWS avoidance
-			}
-			// time.Sleep(time.Microsecond)
-			// fmt.Println(a.name, "rwnd", a.rwnd, "usable window", usableWnd, "ratio", swsRatio)
+				if dataLen > a.rwnd {
+					// println("WOULD EXCEED RECEIVE WINDOW. GOING SLOW NOW?")
+					break // no more rwnd
+				}
 
-			a.setRWND(a.RWND() - dataLen)
+				var usableWnd uint32
+				if a.rwnd < inflightQueueNumBytes {
+					usableWnd = 0
+				} else {
+					usableWnd = a.rwnd - inflightQueueNumBytes
+				}
+				var swsRatio float64
+				if a.rwnd == 0 {
+					swsRatio = 0
+				} else {
+					swsRatio = float64(usableWnd) / float64(a.rwnd)
+				}
+				if swsRatio < 0.25 {
+					// println(a.name, "SWS AVOID usable")
+					// TODO(erd): reenable
+					break // SWS avoidance
+				}
+				// time.Sleep(time.Microsecond)
+				// fmt.Println(a.name, "rwnd", a.rwnd, "usable window", usableWnd, "ratio", swsRatio)
 
-			a.movePendingDataChunkToInflightQueue(c)
-			chunks = append(chunks, c)
-			// println(time.Now().Unix(), a.name, "will send ssn", c.streamSequenceNumber, c.tsn)
+				a.setRWND(a.RWND() - dataLen)
+
+				a.movePendingDataChunkToInflightQueue(c)
+				chunks = append(chunks, c)
+				// println(time.Now().Unix(), a.name, "will send ssn", c.streamSequenceNumber, c.tsn)
+			}
 		}
 
 		// the data sender can always have one DATA chunk in flight to the receiver
@@ -2428,6 +2460,7 @@ func (a *Association) bundleDataChunksIntoPackets(chunks []*chunkPayloadData) []
 
 	if len(chunksToSend) > 0 {
 		packets = append(packets, a.createPacket(chunksToSend))
+		// println("bundled", len(chunksToSend), "into", len(packets))
 	}
 
 	return packets
@@ -2449,7 +2482,7 @@ func (a *Association) sendPayloadData(chunks []*chunkPayloadData) error {
 		a.pendingQueue.push(c)
 	}
 
-	// fmt.Println(a.name, "pending queue size", a.pendingQueue.size(), a.pendingQueue.getNumBytes(), a.inflightQueue.getNumBytes())
+	// fmt.Println(a.name, "pending queue size", a.pendingQueue.size(), a.pendingQueue.getNumBytes(), a.inflightQueue.getNumBytes(), a.MTU())
 	// time.Sleep(100 * time.Nanosecond)
 
 	a.awakeWriteLoop()
