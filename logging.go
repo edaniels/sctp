@@ -9,6 +9,7 @@ import (
 	"github.com/pion/logging"
 )
 
+// TODO(erd): need to undo these cause of bad scope. or make new option
 type leveledLoggerWithName struct {
 	logger  logging.LeveledLogger
 	name    string

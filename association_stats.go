@@ -8,12 +8,21 @@ import (
 )
 
 type associationStats struct {
+	nPackets     uint64
 	nDATAs       uint64
 	nSACKs       uint64
 	nSACKsSent   uint64
 	nT3Timeouts  uint64
 	nAckTimeouts uint64
 	nFastRetrans uint64
+}
+
+func (s *associationStats) incPackets() {
+	atomic.AddUint64(&s.nPackets, 1)
+}
+
+func (s *associationStats) getNumPackets() uint64 {
+	return atomic.LoadUint64(&s.nPackets)
 }
 
 func (s *associationStats) incDATAs() {

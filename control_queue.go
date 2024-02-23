@@ -3,10 +3,13 @@
 
 package sctp
 
+import "sync"
+
 // control queue
 
 type controlQueue struct {
 	queue []*packet
+	mu    sync.RWMutex
 }
 
 func newControlQueue() *controlQueue {
@@ -14,19 +17,28 @@ func newControlQueue() *controlQueue {
 }
 
 func (q *controlQueue) push(c *packet) {
+	q.mu.Lock()
 	q.queue = append(q.queue, c)
+	q.mu.Unlock()
 }
 
 func (q *controlQueue) pushAll(packets []*packet) {
+	q.mu.Lock()
 	q.queue = append(q.queue, packets...)
+	q.mu.Unlock()
 }
 
 func (q *controlQueue) popAll() []*packet {
+	q.mu.Lock()
 	packets := q.queue
 	q.queue = []*packet{}
+	q.mu.Unlock()
 	return packets
 }
 
 func (q *controlQueue) size() int {
-	return len(q.queue)
+	q.mu.RLock()
+	size := len(q.queue)
+	q.mu.RUnlock()
+	return size
 }

@@ -206,3 +206,7 @@ func (p *chunkPayloadData) setAllInflight() {
 		}
 	}
 }
+
+func (p *chunkPayloadData) isUnfragmented() bool {
+	return p.head == nil && p.beginningFragment && p.endingFragment
+}

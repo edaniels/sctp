@@ -309,6 +309,10 @@ func (s *Stream) packetize(raw []byte, ppi PayloadProtocolIdentifier) []*chunkPa
 			streamSequenceNumber: s.sequenceNumber,
 			head:                 head,
 		}
+		if !(chunk.beginningFragment && chunk.endingFragment) {
+			panic("FRAGMENT")
+		}
+		// println("CHUNK UNFRAG?", chunk.beginningFragment && chunk.endingFragment)
 
 		if head == nil {
 			head = chunk
